@@ -128,6 +128,67 @@ def test_cli_does_not_leak_goals_across_sessions(tmp_path):
     assert result.stdout == ""  # no block when no goal in this session
 
 
+def test_two_concurrent_terminals_do_not_share_goals(tmp_path):
+    """Two Claude sessions in separate terminal tabs must stay isolated.
+
+    Real-world repro: user runs Claude in tab A, sets a goal. User opens
+    tab B and runs Claude there with no goal. Tab B's Stop hook used to
+    fire telling it to keep working on tab A's goal. Each terminal tab
+    has its own TERM_SESSION_ID, so under the fix tab B's candidate
+    list never includes tab A's session id and the hook stays silent.
+    """
+    db = str(tmp_path / "goals.sqlite")
+
+    # Tab A: sets a goal under its own iTerm session id.
+    env_a = os.environ.copy()
+    env_a["CLAUDE_GOAL_DB"] = db
+    env_a.pop("CLAUDE_GOAL_SESSION_ID", None)
+    env_a.pop("CLAUDE_SESSION_ID", None)
+    env_a["TERM_SESSION_ID"] = "iterm-tab-A-uuid"
+    env_a["PWD"] = "/Users/alice/proj-a"
+    set_a = subprocess.run(
+        [sys.executable, str(SCRIPT), "set", "tab A goal"],
+        env=env_a, text=True, capture_output=True, check=False,
+    )
+    assert set_a.returncode == 0, set_a.stderr
+
+    # Tab B: different TERM_SESSION_ID, different cwd, no goal of its own.
+    env_b = os.environ.copy()
+    env_b["CLAUDE_GOAL_DB"] = db
+    env_b.pop("CLAUDE_GOAL_SESSION_ID", None)
+    env_b.pop("CLAUDE_SESSION_ID", None)
+    env_b["TERM_SESSION_ID"] = "iterm-tab-B-uuid"
+    env_b["PWD"] = "/Users/alice/proj-b"
+
+    status_b = subprocess.run(
+        [sys.executable, str(SCRIPT), "status"],
+        env=env_b, text=True, capture_output=True, check=False,
+    )
+    assert status_b.returncode == 0, status_b.stderr
+    assert "No goal is currently set" in status_b.stdout
+    assert "tab A goal" not in status_b.stdout
+
+    # Tab B's Stop hook must stay silent — it has no goal of its own.
+    hook_b = subprocess.run(
+        [sys.executable, str(SCRIPT), "stop-hook"],
+        input=json.dumps({"session_id": "claude-session-b", "cwd": "/Users/alice/proj-b"}),
+        env=env_b, text=True, capture_output=True, check=False,
+    )
+    assert hook_b.returncode == 0, hook_b.stderr
+    assert hook_b.stdout == "", f"Tab B hook leaked tab A's goal: {hook_b.stdout!r}"
+
+    # Tab A's hook still finds its own goal.
+    hook_a = subprocess.run(
+        [sys.executable, str(SCRIPT), "stop-hook"],
+        input=json.dumps({"session_id": "claude-session-a", "cwd": "/Users/alice/proj-a"}),
+        env=env_a, text=True, capture_output=True, check=False,
+    )
+    assert hook_a.returncode == 0, hook_a.stderr
+    data = json.loads(hook_a.stdout)
+    assert data["decision"] == "block"
+    assert "tab A goal" in data["reason"]
+
+
 def test_term_session_anchors_goal_across_pwd_drift(tmp_path):
     """A goal set in one Claude session must remain reachable across cwd drift.
 
