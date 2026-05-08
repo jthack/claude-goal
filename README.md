@@ -2,7 +2,7 @@
 
 A Codex-style `/goal` command for Claude Code.
 
-It gives Claude Code a persistent local goal state, Codex-inspired continuation instructions, pause/resume/clear/status controls, completion-audit guardrails, and an importer for your existing Codex `/goal` history from `~/.codex/state_5.sqlite`.
+It gives Claude Code a persistent local goal state, Codex-inspired continuation instructions, pause/resume/clear/status controls, completion-audit guardrails, and an importer that can copy your existing Codex `/goal` history out of Codex's local SQLite database at `~/.codex/state_5.sqlite`.
 
 ## Install
 
@@ -14,8 +14,9 @@ cd claude-goal
 
 This installs:
 
-- `~/.claude/skills/goal` as a symlink to `goal/`
-- `~/.claude/commands/goal.md` as a legacy slash-command shim
+- `~/.claude/skills/goal` as a symlink to this repo's `goal/` directory
+
+The `goal/` directory is the Claude skill package. It contains `SKILL.md`, `scripts/claude_goal.py`, and reference notes.
 
 State is stored at:
 
