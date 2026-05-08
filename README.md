@@ -43,7 +43,13 @@ When a goal is active, the command returns a continuation prompt that wraps the 
 
 Claude Code custom skills do not currently expose reliable live per-turn token usage to markdown commands. Token budgets are therefore stored and displayed as soft budgets. Elapsed-time tracking is local and persistent.
 
-The Stop hook blocks Claude from stopping while the current goal is active. It stops blocking when you run `/goal pause`, `/goal clear`, or `/goal complete`. A runaway guard defaults to 200 stop-hook continuations; override with `CLAUDE_GOAL_MAX_STOP_CONTINUES`.
+The Stop hook blocks Claude from stopping while the current goal is active. It stops blocking when you run `/goal pause`, `/goal clear`, or `/goal complete`.
+
+By default, the runaway guard allows up to 500 Stop-hook continuations for a single active goal. That high default is intentional: `/goal` is meant for long-running work where Claude may need many turns to finish. If you want a stricter cap, set `CLAUDE_GOAL_MAX_STOP_CONTINUES` before launching Claude Code:
+
+```bash
+export CLAUDE_GOAL_MAX_STOP_CONTINUES=50
+```
 
 ## Test
 
