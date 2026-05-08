@@ -15,10 +15,8 @@ import re
 import shlex
 import sqlite3
 import sys
-import textwrap
 import time
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +37,12 @@ def session_id() -> str:
         if value:
             return value
     cwd = os.environ.get("PWD") or str(Path.cwd())
+    return "cwd:" + hashlib.sha256(cwd.encode()).hexdigest()[:16]
+
+
+def cwd_session_id(cwd: str | None) -> str | None:
+    if not cwd:
+        return None
     return "cwd:" + hashlib.sha256(cwd.encode()).hexdigest()[:16]
 
 
@@ -153,6 +157,14 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 def get_goal(conn: sqlite3.Connection, sid: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM goals WHERE session_id = ?", (sid,)).fetchone()
+
+
+def get_first_goal(conn: sqlite3.Connection, session_ids: list[str]) -> sqlite3.Row | None:
+    for sid in session_ids:
+        goal = get_goal(conn, sid)
+        if goal:
+            return goal
+    return None
 
 
 def validate_objective(objective: str) -> str:
@@ -306,6 +318,22 @@ Then report the final elapsed time and token-budget state to the user.
 """
 
 
+STOP_HOOK_REASON = """\
+An active /goal is still running.
+
+<objective>
+{objective}
+</objective>
+
+Continue working toward the objective. Avoid repeating completed work.
+
+If the objective is fully achieved, first perform the completion audit, then run:
+`python3 ~/.claude/skills/goal/scripts/claude_goal.py complete`
+
+If the goal cannot continue productively because user input is required, explain the blocker clearly. The user can run `/goal pause` or `/goal clear` to stop automatic continuation.
+"""
+
+
 def render_invoke_result(action: str, goal: sqlite3.Row | None, extra: str = "") -> str:
     body = [f"Action: {action}", "", render_goal(goal)]
     if extra:
@@ -352,6 +380,62 @@ def invoke(raw_args: str) -> str:
         return render_invoke_result("set", set_goal(conn, sid, objective, budget))
 
 
+def stop_hook() -> int:
+    try:
+        data = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        data = {}
+
+    candidates: list[str] = []
+    for value in (
+        os.environ.get("CLAUDE_GOAL_SESSION_ID"),
+        os.environ.get("CLAUDE_SESSION_ID"),
+        data.get("session_id"),
+        cwd_session_id(data.get("cwd")),
+        session_id(),
+    ):
+        if value and value not in candidates:
+            candidates.append(value)
+
+    with sqlite_connect() as conn:
+        goal = get_first_goal(conn, candidates)
+        if not goal or goal["status"] != "active":
+            return 0
+
+        max_continues = int(os.environ.get("CLAUDE_GOAL_MAX_STOP_CONTINUES", "25"))
+        recent_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM events
+            WHERE goal_id = ?
+              AND event = 'stop_continue'
+              AND created_at >= ?
+            """,
+            (goal["id"], goal["active_started_at"] or goal["created_at"]),
+        ).fetchone()[0]
+        if recent_count >= max_continues:
+            print(
+                json.dumps(
+                    {
+                        "continue": True,
+                        "stopReason": f"/goal auto-continuation stopped after {max_continues} Stop-hook continuations. Run /goal resume or raise CLAUDE_GOAL_MAX_STOP_CONTINUES to continue automatically.",
+                    }
+                )
+            )
+            return 0
+
+        event(conn, goal["session_id"], "stop_continue", goal_id=goal["id"])
+        print(
+            json.dumps(
+                {
+                    "decision": "block",
+                    "reason": STOP_HOOK_REASON.format(objective=goal["objective"]),
+                }
+            )
+        )
+        return 0
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] in {"invoke", "set"}:
         cmd = argv[0]
@@ -381,6 +465,7 @@ def main(argv: list[str]) -> int:
     p_set.add_argument("args", nargs=argparse.REMAINDER)
     p_json = sub.add_parser("json")
     p_json.add_argument("--session-id", default=session_id())
+    sub.add_parser("stop-hook")
     args = parser.parse_args(argv)
 
     try:
@@ -408,6 +493,8 @@ def main(argv: list[str]) -> int:
         elif args.cmd == "json":
             with sqlite_connect() as conn:
                 print(render_goal_json(get_goal(conn, args.session_id)))
+        elif args.cmd == "stop-hook":
+            return stop_hook()
         else:
             parser.print_help()
             return 2

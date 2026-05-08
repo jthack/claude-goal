@@ -59,3 +59,40 @@ def test_json_output(tmp_path):
     data = json.loads(result.stdout)
     assert data["objective"] == "ship the thing"
     assert data["status"] == "active"
+
+
+def test_stop_hook_blocks_active_goal(tmp_path):
+    assert run_goal(tmp_path, "set", "keep going").returncode == 0
+    env = os.environ.copy()
+    env["CLAUDE_GOAL_DB"] = str(tmp_path / "goals.sqlite")
+    env["CLAUDE_GOAL_SESSION_ID"] = "test-session"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "stop-hook"],
+        input=json.dumps({"session_id": "test-session", "stop_hook_active": False}),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["decision"] == "block"
+    assert "<objective>" in data["reason"]
+
+
+def test_stop_hook_allows_paused_goal(tmp_path):
+    assert run_goal(tmp_path, "set", "keep going").returncode == 0
+    assert run_goal(tmp_path, "pause").returncode == 0
+    env = os.environ.copy()
+    env["CLAUDE_GOAL_DB"] = str(tmp_path / "goals.sqlite")
+    env["CLAUDE_GOAL_SESSION_ID"] = "test-session"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "stop-hook"],
+        input=json.dumps({"session_id": "test-session"}),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""

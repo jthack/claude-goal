@@ -14,6 +14,43 @@ if [ -L "$HOME/.claude/commands/goal.md" ] && [ "$(readlink "$HOME/.claude/comma
   rm "$HOME/.claude/commands/goal.md"
 fi
 
+python3 - "$HOME/.claude/settings.json" "$ROOT/goal/scripts/claude_goal.py" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+settings_path = Path(sys.argv[1])
+script_path = Path(sys.argv[2])
+settings_path.parent.mkdir(parents=True, exist_ok=True)
+if settings_path.exists():
+    data = json.loads(settings_path.read_text())
+else:
+    data = {}
+
+hooks = data.setdefault("hooks", {})
+stop_hooks = hooks.setdefault("Stop", [])
+entry = {
+    "matcher": "",
+    "hooks": [
+        {
+            "type": "command",
+            "command": f"python3 {script_path} stop-hook",
+        }
+    ],
+}
+
+command = entry["hooks"][0]["command"]
+for item in stop_hooks:
+    item_hooks = item.get("hooks", [])
+    if any(hook.get("command") == command for hook in item_hooks):
+        break
+else:
+    stop_hooks.append(entry)
+
+settings_path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+
 echo "Installed /goal for Claude Code."
 echo "Skill: $HOME/.claude/skills/goal"
+echo "Stop hook: python3 $ROOT/goal/scripts/claude_goal.py stop-hook"
 echo "State DB: $HOME/.claude/goal/goals.sqlite"
