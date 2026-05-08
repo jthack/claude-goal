@@ -478,7 +478,7 @@ def stop_hook() -> int:
         if not goal or goal["status"] != "active":
             return 0
 
-        max_continues = int(os.environ.get("CLAUDE_GOAL_MAX_STOP_CONTINUES", "25"))
+        max_continues = int(os.environ.get("CLAUDE_GOAL_MAX_STOP_CONTINUES", "200"))
         recent_count = conn.execute(
             """
             SELECT COUNT(*)
