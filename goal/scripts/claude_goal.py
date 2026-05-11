@@ -400,6 +400,8 @@ Before deciding that the goal is achieved, perform a completion audit against ac
 Only mark the goal complete after the audit shows the objective is achieved and no required work remains. To mark it complete, run:
 `python3 ~/.claude/skills/goal/scripts/claude_goal.py complete`
 Then report the final elapsed time and token-budget state to the user.
+
+If the goal genuinely cannot continue (need user input, device offline, missing external resource), pause it — the user can run `/goal pause`, or you can run `python3 ~/.claude/skills/goal/scripts/claude_goal.py pause` yourself. Writing "please run /goal pause" in chat does nothing by itself: the Stop hook retries until the DB status changes.
 """
 
 
@@ -415,7 +417,7 @@ Continue working toward the objective. Avoid repeating completed work.
 If the objective is fully achieved, first perform the completion audit, then run:
 `python3 ~/.claude/skills/goal/scripts/claude_goal.py complete`
 
-If the goal cannot continue productively because user input is required, explain the blocker clearly. The user can run `/goal pause` or `/goal clear` to stop automatic continuation.
+If you cannot continue (need user input, device offline, missing resource), pause it: user runs `/goal pause`, or you run `python3 ~/.claude/skills/goal/scripts/claude_goal.py pause` yourself. "Please run /goal pause" written in chat does NOT pause — this hook will re-fire until the DB status changes. If the same blocker repeats across multiple Stop re-entries, the user has not seen your message yet; self-pause.
 """
 
 
