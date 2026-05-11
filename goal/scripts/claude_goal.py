@@ -25,6 +25,7 @@ STATUSES = {"active", "paused", "budget_limited", "complete"}
 MAX_OBJECTIVE_CHARS = 4000
 STATE_DIR = Path(os.environ.get("CLAUDE_GOAL_HOME", Path.home() / ".claude" / "goal"))
 DB_PATH = Path(os.environ.get("CLAUDE_GOAL_DB", STATE_DIR / "goals.sqlite"))
+SCRIPT_PATH = os.path.abspath(__file__)
 
 
 def now() -> int:
@@ -398,10 +399,10 @@ Before deciding that the goal is achieved, perform a completion audit against ac
 - Treat uncertainty as not achieved; continue verification or work.
 
 Only mark the goal complete after the audit shows the objective is achieved and no required work remains. To mark it complete, run:
-`python3 ~/.claude/skills/goal/scripts/claude_goal.py complete`
+`python3 {script_path} complete`
 Then report the final elapsed time and token-budget state to the user.
 
-If the goal genuinely cannot continue (need user input, device offline, missing external resource), pause it — the user can run `/goal pause`, or you can run `python3 ~/.claude/skills/goal/scripts/claude_goal.py pause` yourself. Writing "please run /goal pause" in chat does nothing by itself: the Stop hook retries until the DB status changes.
+If the goal genuinely cannot continue (need user input, device offline, missing external resource), pause it — the user can run `/goal pause`, or you can run `python3 {script_path} pause` yourself. Writing "please run /goal pause" in chat does nothing by itself: the Stop hook retries until the DB status changes.
 """
 
 
@@ -415,9 +416,9 @@ An active /goal is still running.
 Continue working toward the objective. Avoid repeating completed work.
 
 If the objective is fully achieved, first perform the completion audit, then run:
-`python3 ~/.claude/skills/goal/scripts/claude_goal.py complete`
+`python3 {script_path} complete`
 
-If you cannot continue (need user input, device offline, missing resource), pause it: user runs `/goal pause`, or you run `python3 ~/.claude/skills/goal/scripts/claude_goal.py pause` yourself. "Please run /goal pause" written in chat does NOT pause — this hook will re-fire until the DB status changes. If the same blocker repeats across multiple Stop re-entries, the user has not seen your message yet; self-pause.
+If you cannot continue (need user input, device offline, missing resource), pause it: user runs `/goal pause`, or you run `python3 {script_path} pause` yourself. "Please run /goal pause" written in chat does NOT pause — this hook will re-fire until the DB status changes. If the same blocker repeats across multiple Stop re-entries, the user has not seen your message yet; self-pause.
 """
 
 
@@ -435,6 +436,7 @@ def render_invoke_result(action: str, goal: sqlite3.Row | None, extra: str = "")
                     elapsed=fmt_elapsed(active_time(goal)),
                     tokens_used=fmt_tokens(goal["tokens_used"]),
                     token_budget=fmt_tokens(goal["token_budget"]),
+                    script_path=SCRIPT_PATH,
                 ),
             ]
         )
@@ -507,7 +509,7 @@ def stop_hook() -> int:
             json.dumps(
                 {
                     "decision": "block",
-                    "reason": STOP_HOOK_REASON.format(objective=goal["objective"]),
+                    "reason": STOP_HOOK_REASON.format(objective=goal["objective"], script_path=SCRIPT_PATH),
                 }
             )
         )
