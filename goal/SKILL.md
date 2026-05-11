@@ -41,3 +41,5 @@ python3 ~/.claude/skills/goal/scripts/claude_goal.py complete
 ```
 
 Then report final elapsed time and any soft budget state.
+
+If the goal cannot continue (user input required, device/resource unavailable, repeated identical blocker), pause it before stopping. Either the user runs `/goal pause` from their input box, or you run `python3 ~/.claude/skills/goal/scripts/claude_goal.py pause` yourself. Writing "please run /goal pause" in chat is not the same as pausing — the Stop hook will re-fire until the goal status changes in the database.
