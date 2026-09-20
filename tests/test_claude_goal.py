@@ -144,6 +144,11 @@ def test_two_concurrent_terminals_do_not_share_goals(tmp_path):
     env_a["CLAUDE_GOAL_DB"] = db
     env_a.pop("CLAUDE_GOAL_SESSION_ID", None)
     env_a.pop("CLAUDE_SESSION_ID", None)
+    # The suite is usually run from inside a Claude Code session, which
+    # exports these; leaving them in would override the terminal anchor
+    # this test exists to exercise.
+    env_a.pop("CLAUDE_CODE_SESSION_ID", None)
+    env_a.pop("CLAUDE_CODE_HOST_SESSION_ID", None)
     env_a["TERM_SESSION_ID"] = "iterm-tab-A-uuid"
     env_a["PWD"] = "/Users/alice/proj-a"
     set_a = subprocess.run(
@@ -157,6 +162,11 @@ def test_two_concurrent_terminals_do_not_share_goals(tmp_path):
     env_b["CLAUDE_GOAL_DB"] = db
     env_b.pop("CLAUDE_GOAL_SESSION_ID", None)
     env_b.pop("CLAUDE_SESSION_ID", None)
+    # The suite is usually run from inside a Claude Code session, which
+    # exports these; leaving them in would override the terminal anchor
+    # this test exists to exercise.
+    env_b.pop("CLAUDE_CODE_SESSION_ID", None)
+    env_b.pop("CLAUDE_CODE_HOST_SESSION_ID", None)
     env_b["TERM_SESSION_ID"] = "iterm-tab-B-uuid"
     env_b["PWD"] = "/Users/alice/proj-b"
 
@@ -201,6 +211,11 @@ def test_term_session_anchors_goal_across_pwd_drift(tmp_path):
     # Strip any explicit overrides so we exclusively test the TERM_SESSION_ID path.
     env.pop("CLAUDE_GOAL_SESSION_ID", None)
     env.pop("CLAUDE_SESSION_ID", None)
+    # The suite is usually run from inside a Claude Code session, which
+    # exports these; leaving them in would override the terminal anchor
+    # this test exists to exercise.
+    env.pop("CLAUDE_CODE_SESSION_ID", None)
+    env.pop("CLAUDE_CODE_HOST_SESSION_ID", None)
     env["TERM_SESSION_ID"] = "iterm-tab-abc-123"
     env["PWD"] = "/tmp/orig-cwd"
 
@@ -254,3 +269,84 @@ def test_stop_hook_finds_goal_via_hook_payload_cwd(tmp_path):
     data = json.loads(result.stdout)
     assert data["decision"] == "block"
     assert "keep going" in data["reason"]
+
+
+def test_two_desktop_sessions_in_one_folder_do_not_share_goals(tmp_path):
+    """Two Claude Code desktop sessions in the same folder must stay isolated.
+
+    The Claude Code desktop app is not a terminal: it sets neither
+    TERM_SESSION_ID nor ITERM_SESSION_ID, so the terminal anchor that keeps
+    two tabs apart is simply absent. What it does export is
+    CLAUDE_CODE_SESSION_ID, one stable UUID per session.
+
+    Without that name in the lookup, session_id() falls through to the PWD
+    hash. Two sessions opened on the same repository then collapse onto one
+    `session_id` row: `set` in one session overwrites the other's goal
+    (the column is UNIQUE), and the Stop hook of the session that has no
+    goal of its own blocks its reply with a stranger's objective.
+    """
+    db = str(tmp_path / "goals.sqlite")
+    shared_cwd = "/Users/alice/proj"
+
+    def desktop_env(session_uuid):
+        env = os.environ.copy()
+        env["CLAUDE_GOAL_DB"] = db
+        # The desktop app exports none of these.
+        for key in (
+            "CLAUDE_GOAL_SESSION_ID",
+            "CLAUDE_SESSION_ID",
+            "TERM_SESSION_ID",
+            "ITERM_SESSION_ID",
+        ):
+            env.pop(key, None)
+        env["CLAUDE_CODE_SESSION_ID"] = session_uuid
+        # Both sessions are open on the same folder.
+        env["PWD"] = shared_cwd
+        return env
+
+    env_a = desktop_env("11111111-aaaa-4aaa-8aaa-111111111111")
+    env_b = desktop_env("22222222-bbbb-4bbb-8bbb-222222222222")
+
+    set_a = subprocess.run(
+        [sys.executable, str(SCRIPT), "set", "session A goal"],
+        env=env_a, text=True, capture_output=True, check=False,
+    )
+    assert set_a.returncode == 0, set_a.stderr
+
+    # Session B sets its own goal; it must not overwrite session A's row.
+    set_b = subprocess.run(
+        [sys.executable, str(SCRIPT), "set", "session B goal"],
+        env=env_b, text=True, capture_output=True, check=False,
+    )
+    assert set_b.returncode == 0, set_b.stderr
+
+    for env, mine, theirs in (
+        (env_a, "session A goal", "session B goal"),
+        (env_b, "session B goal", "session A goal"),
+    ):
+        status = subprocess.run(
+            [sys.executable, str(SCRIPT), "status"],
+            env=env, text=True, capture_output=True, check=False,
+        )
+        assert status.returncode == 0, status.stderr
+        assert mine in status.stdout, status.stdout
+        assert theirs not in status.stdout, status.stdout
+
+    # A third session in the same folder never set a goal: its Stop hook
+    # must stay silent instead of adopting session A's objective.
+    env_c = desktop_env("33333333-cccc-4ccc-8ccc-333333333333")
+    status_c = subprocess.run(
+        [sys.executable, str(SCRIPT), "status"],
+        env=env_c, text=True, capture_output=True, check=False,
+    )
+    assert "No goal is currently set" in status_c.stdout, status_c.stdout
+
+    hook_c = subprocess.run(
+        [sys.executable, str(SCRIPT), "stop-hook"],
+        input=json.dumps(
+            {"session_id": "33333333-cccc-4ccc-8ccc-333333333333", "cwd": shared_cwd}
+        ),
+        env=env_c, text=True, capture_output=True, check=False,
+    )
+    assert hook_c.returncode == 0, hook_c.stderr
+    assert hook_c.stdout == "", f"session C hook leaked another goal: {hook_c.stdout!r}"

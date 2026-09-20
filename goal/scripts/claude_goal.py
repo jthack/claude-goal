@@ -31,6 +31,21 @@ def now() -> int:
     return int(time.time())
 
 
+# Environment names that carry the real session id, most trusted first.
+#
+# `CLAUDE_CODE_SESSION_ID` is what the Claude Code desktop app exports: one
+# stable UUID per session. The desktop app is not a terminal, so it sets no
+# TERM_SESSION_ID / ITERM_SESSION_ID and the terminal anchor below never fires.
+# Without this name the lookup fell through to the PWD hash, and two desktop
+# sessions opened on the same folder shared a single `session_id` row.
+SESSION_ENV_KEYS = (
+    "CLAUDE_GOAL_SESSION_ID",
+    "CLAUDE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_HOST_SESSION_ID",
+)
+
+
 def _term_session_id() -> str | None:
     """Return a stable identifier tied to the current terminal session.
 
@@ -51,11 +66,13 @@ def session_id() -> str:
 
     Order of preference:
     - CLAUDE_GOAL_SESSION_ID / CLAUDE_SESSION_ID (explicit override)
+    - CLAUDE_CODE_SESSION_ID / CLAUDE_CODE_HOST_SESSION_ID (exported by the
+      Claude Code desktop app, which has no terminal session id at all)
     - TERM_SESSION_ID / ITERM_SESSION_ID (stable across subshells in one
       Claude Code session, distinct across separate terminal tabs)
     - PWD-derived hash (last resort; drifts in subshells)
     """
-    for key in ("CLAUDE_GOAL_SESSION_ID", "CLAUDE_SESSION_ID"):
+    for key in SESSION_ENV_KEYS:
         value = os.environ.get(key)
         if value:
             return value
@@ -204,10 +221,7 @@ def candidate_session_ids(hook_data: dict[str, Any] | None = None) -> list[str]:
     resolve after the script is upgraded.
     """
     out: list[str] = []
-    sources: list[str | None] = [
-        os.environ.get("CLAUDE_GOAL_SESSION_ID"),
-        os.environ.get("CLAUDE_SESSION_ID"),
-    ]
+    sources: list[str | None] = [os.environ.get(k) for k in SESSION_ENV_KEYS]
     if hook_data:
         sources.append(hook_data.get("session_id"))
         sources.append(cwd_session_id(hook_data.get("cwd")))
