@@ -144,6 +144,7 @@ def test_two_concurrent_terminals_do_not_share_goals(tmp_path):
     env_a["CLAUDE_GOAL_DB"] = db
     env_a.pop("CLAUDE_GOAL_SESSION_ID", None)
     env_a.pop("CLAUDE_SESSION_ID", None)
+    env_a.pop("CLAUDE_CODE_SESSION_ID", None)
     env_a["TERM_SESSION_ID"] = "iterm-tab-A-uuid"
     env_a["PWD"] = "/Users/alice/proj-a"
     set_a = subprocess.run(
@@ -157,6 +158,7 @@ def test_two_concurrent_terminals_do_not_share_goals(tmp_path):
     env_b["CLAUDE_GOAL_DB"] = db
     env_b.pop("CLAUDE_GOAL_SESSION_ID", None)
     env_b.pop("CLAUDE_SESSION_ID", None)
+    env_b.pop("CLAUDE_CODE_SESSION_ID", None)
     env_b["TERM_SESSION_ID"] = "iterm-tab-B-uuid"
     env_b["PWD"] = "/Users/alice/proj-b"
 
@@ -254,3 +256,54 @@ def test_stop_hook_finds_goal_via_hook_payload_cwd(tmp_path):
     data = json.loads(result.stdout)
     assert data["decision"] == "block"
     assert "keep going" in data["reason"]
+
+
+def test_claude_code_session_id_keys_goal_per_session(tmp_path):
+    """Claude Code exports CLAUDE_CODE_SESSION_ID to every Bash call.
+
+    Without reading it, a goal set from Claude Code falls back to the cwd
+    hash, and every other Claude session in the same folder inherits it:
+    their Stop hooks start blocking on a goal they never set.
+    """
+    shared_cwd = str(tmp_path / "repo")
+    Path(shared_cwd).mkdir()
+
+    def env_for(session):
+        env = os.environ.copy()
+        env["CLAUDE_GOAL_DB"] = str(tmp_path / "goals.sqlite")
+        env.pop("CLAUDE_GOAL_SESSION_ID", None)
+        env.pop("CLAUDE_SESSION_ID", None)
+        env.pop("TERM_SESSION_ID", None)
+        env.pop("ITERM_SESSION_ID", None)
+        env["CLAUDE_CODE_SESSION_ID"] = session
+        env["PWD"] = shared_cwd
+        return env
+
+    set_result = subprocess.run(
+        [sys.executable, str(SCRIPT), "set", "ship feature A"],
+        env=env_for("session-a"),
+        cwd=shared_cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert set_result.returncode == 0, set_result.stderr
+
+    def stop_hook(session):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "stop-hook"],
+            input=json.dumps({"session_id": session, "cwd": shared_cwd}),
+            env=env_for(session),
+            cwd=shared_cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    owner = stop_hook("session-a")
+    assert owner.returncode == 0, owner.stderr
+    assert json.loads(owner.stdout)["decision"] == "block"
+
+    neighbour = stop_hook("session-b")
+    assert neighbour.returncode == 0, neighbour.stderr
+    assert neighbour.stdout.strip() == ""

@@ -51,11 +51,13 @@ def session_id() -> str:
 
     Order of preference:
     - CLAUDE_GOAL_SESSION_ID / CLAUDE_SESSION_ID (explicit override)
+    - CLAUDE_CODE_SESSION_ID (exported by Claude Code to every Bash call;
+      matches the session_id in the Stop hook payload)
     - TERM_SESSION_ID / ITERM_SESSION_ID (stable across subshells in one
       Claude Code session, distinct across separate terminal tabs)
     - PWD-derived hash (last resort; drifts in subshells)
     """
-    for key in ("CLAUDE_GOAL_SESSION_ID", "CLAUDE_SESSION_ID"):
+    for key in ("CLAUDE_GOAL_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"):
         value = os.environ.get(key)
         if value:
             return value
@@ -207,6 +209,7 @@ def candidate_session_ids(hook_data: dict[str, Any] | None = None) -> list[str]:
     sources: list[str | None] = [
         os.environ.get("CLAUDE_GOAL_SESSION_ID"),
         os.environ.get("CLAUDE_SESSION_ID"),
+        os.environ.get("CLAUDE_CODE_SESSION_ID"),
     ]
     if hook_data:
         sources.append(hook_data.get("session_id"))
